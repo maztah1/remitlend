@@ -7,7 +7,23 @@ on:
         description: 'Target URL to run the load test against (e.g. deployed staging URL)'
         required: true
         default: 'https://staging.remitlend.com'
+      profile:
+        description: 'Load profile to run: baseline | production'
+        required: false
+        default: 'production'
+      jwt_token:
+        description: 'Bearer token for authenticated endpoints (optional; omit to test public routes only)'
+        required: false
+        default: ''
+      wallet_address:
+        description: 'Stellar wallet address used in read-path requests'
+        required: false
+        default: 'GCJPBXSE6WCQDCEYZW6C3YVZCSSCHC4AE72L5KWKCYL2CLLL7NH5VSCI'
 
+# Issue #405: production-shaped load profile with realistic traffic stages and
+# per-endpoint thresholds. The `production` profile models ramp-up → sustained →
+# spike → recover stages and covers public reads, authenticated reads, and the
+# write path with idempotency keys.
 jobs:
   k6-load-test:
     runs-on: ubuntu-latest
@@ -15,9 +31,20 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
-      - name: Run k6 baseline load test
+      - name: Select load profile script
+        id: select-script
+        run: |
+          if [ "${{ github.event.inputs.profile }}" = "baseline" ]; then
+            echo "script=scripts/loadtest/baseline.js" >> "$GITHUB_OUTPUT"
+          else
+            echo "script=scripts/loadtest/production-profile.js" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run k6 load test (${{ github.event.inputs.profile || 'production' }})
         uses: grafana/k6-action@v0.3.1
         with:
-          filename: scripts/loadtest/baseline.js
+          filename: ${{ steps.select-script.outputs.script }}
         env:
-          TARGET_URL: ${{ github.event.inputs.target_url }}
+          TARGET_URL:     ${{ github.event.inputs.target_url }}
+          JWT_TOKEN:      ${{ github.event.inputs.jwt_token }}
+          WALLET_ADDRESS: ${{ github.event.inputs.wallet_address }}

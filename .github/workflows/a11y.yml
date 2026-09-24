@@ -37,5 +37,11 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Run accessibility snapshots
+      - name: Run accessibility snapshots (public routes)
         run: npx playwright test e2e/a11y.spec.ts --project=chromium
+
+      # Issue #404: extend axe-core coverage to authenticated routes.
+      # The spec seeds a connected-wallet fixture and mocks API calls so the
+      # pages render without a live backend.
+      - name: Run accessibility snapshots (authenticated routes)
+        run: npx playwright test e2e/accessibility-authenticated.spec.ts --project=chromium
