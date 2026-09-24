@@ -5,6 +5,13 @@ identities are established, how roles map to scopes, and which scope guard
 protects each route group. See also [SECURITY.md](../SECURITY.md) for the
 vulnerability-disclosure policy.
 
+Related security documents:
+
+- [Data Retention & Deletion Matrix](security/data-retention-matrix.md)
+- [Privacy-Preserving Remittance Evidence Architecture](security/privacy-preserving-architecture.md)
+- [Privileged Action Approval Policy](security/privileged-action-approval-policy.md)
+- [Continuous Authorization Matrix Tests](security/authorization-matrix-tests.md)
+
 ---
 
 ## Authentication flows

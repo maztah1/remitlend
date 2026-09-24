@@ -4,6 +4,13 @@ For the authentication and authorization model (roles, scopes, JWT flow,
 API-key namespaces, cookie attributes, and route guards) see
 [docs/SECURITY-MODEL.md](docs/SECURITY-MODEL.md).
 
+Additional security references:
+
+- [Data Retention & Deletion Matrix](docs/security/data-retention-matrix.md) — how long each data category is kept and how it is deleted (#364)
+- [Privacy-Preserving Remittance Evidence Architecture](docs/security/privacy-preserving-architecture.md) — how remittance proofs are handled without leaking PII on-chain (#365)
+- [Privileged Action Approval Policy](docs/security/privileged-action-approval-policy.md) — two-admin gate for irreversible/high-blast-radius actions (#366)
+- [Continuous Authorization Matrix Tests](docs/security/authorization-matrix-tests.md) — automated enforcement of the route/scope matrix (#367)
+
 ## Supported Versions
 
 Only the current `main` branch and the last tagged release are supported with security updates.
