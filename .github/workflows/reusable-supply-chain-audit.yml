@@ -1,0 +1,30 @@
+# Issue #409 – Reusable workflow: supply-chain audit
+# Least-privilege: only reads code, no write permissions needed.
+name: Supply Chain Audit (reusable)
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read  # checkout only
+
+jobs:
+  supply-chain-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Block compromised packages
+        run: |
+          echo "Scanning lockfiles for known malicious packages..."
+          BLOCKED="plain-crypto-js"
+          for lockfile in backend/package-lock.json frontend/package-lock.json scripts/package-lock.json; do
+            if [ -f "$lockfile" ] && grep -q "$BLOCKED" "$lockfile"; then
+              echo "::error::SUPPLY CHAIN ALERT: $lockfile contains $BLOCKED (confirmed malware)"
+              exit 1
+            fi
+          done
+          if grep -r '"axios": "1\.14\.' --include="package-lock.json" .; then
+            echo "::error::SUPPLY CHAIN ALERT: axios 1.14.x detected (compromised version)"
+            exit 1
+          fi
+          echo "No known malicious packages found."

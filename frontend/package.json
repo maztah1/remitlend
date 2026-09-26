@@ -9,6 +9,7 @@
     "dev": "next dev",
     "build": "next build",
     "performance:budget": "node scripts/check-performance-budget.mjs",
+    "performance:budget:mobile": "node scripts/check-mobile-performance-budget.mjs",
     "i18n:check": "node scripts/check-i18n.mjs",
     "start": "next start",
     "lint": "prettier --check .",
