@@ -10,6 +10,12 @@ import {
 } from '@stellar/stellar-sdk';
 import logger from '../utils/logger.js';
 import { AppError } from '../errors/AppError.js';
+import { getTraceContext } from '../utils/requestContext.js';
+import { formatTraceparent, outboundTraceContext } from '../utils/traceContext.js';
+import {
+  chainConfirmationCounter,
+  chainConfirmationDurationHistogram,
+} from '../middleware/metrics.js';
 import {
   createSorobanRpcServer,
   getStellarNetworkPassphrase,
@@ -759,45 +765,106 @@ class SorobanService {
   }> {
     const server = this.getRpcServer();
 
+    // Chain confirmation is its own traced span (#414): it derives from the
+    // caller's trace context (wallet → API request, or indexer pass) so the
+    // submitted transaction, the RPC polling, and the final status can all be
+    // joined by trace id. Outside any caller context a new root trace starts.
+    const confirmationTrace = outboundTraceContext(getTraceContext());
+    const confirmationStartedAt = Date.now();
+    const confirmationLogger = logger.withContext({
+      traceId: confirmationTrace.traceId,
+      module: 'chain-confirmation',
+      action: 'submit',
+    });
+
     const tx = TransactionBuilder.fromXDR(signedTxXdr, this.getNetworkPassphrase());
 
     const sendResult = await server.sendTransaction(tx);
     const txHash = sendResult.hash;
 
     if (!txHash) {
+      chainConfirmationCounter.inc({ status: 'error' });
+      confirmationLogger.error('Transaction submission returned no hash');
       throw AppError.internal('Transaction submission returned no hash');
     }
 
-    logger.withContext().info('Transaction submitted', {
+    confirmationLogger.info('Transaction submitted', {
       txHash,
       status: sendResult.status,
+      // Outbound hop header for the RPC call, for correlation with RPC-side logs.
+      traceparent: formatTraceparent(confirmationTrace),
     });
 
     if (sendResult.status === 'ERROR' || sendResult.status === 'TRY_AGAIN_LATER') {
-      logger.withContext().warn('Transaction rejected at submission', {
+      confirmationLogger.warn('Transaction rejected at submission', {
         txHash,
         status: sendResult.status,
         errorResult: sendResult.errorResult?.toXDR('base64'),
       });
+      this.recordChainConfirmation('error', confirmationStartedAt);
       return { txHash, status: sendResult.status };
     }
 
-    // Poll for final result
-    const polled = await server.pollTransaction(txHash, {
-      attempts: 30,
-      sleepStrategy: () => 1000,
-    });
+    // Poll for final result. `pollTransaction` throws on RPC/timeout failures;
+    // the throw is preserved (callers already handle it) but the outcome is
+    // now observable in metrics + logs with the trace id attached.
+    let polled: Awaited<ReturnType<typeof server.pollTransaction>>;
+    try {
+      polled = await server.pollTransaction(txHash, {
+        attempts: 30,
+        sleepStrategy: () => 1000,
+      });
+    } catch (error) {
+      this.recordChainConfirmation('error', confirmationStartedAt);
+      confirmationLogger.error('Chain confirmation dependency failure', {
+        txHash,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
 
     const resultXdr =
       polled.status === 'SUCCESS' && polled.resultXdr
         ? polled.resultXdr.toXDR('base64')
         : undefined;
 
+    const confirmationStatus =
+      polled.status === 'SUCCESS'
+        ? 'success'
+        : polled.status === 'FAILED'
+          ? 'failed'
+          : polled.status === 'NOT_FOUND'
+            ? 'not_found'
+            : 'unknown';
+
+    this.recordChainConfirmation(confirmationStatus, confirmationStartedAt);
+
+    if (confirmationStatus === 'success') {
+      confirmationLogger.info('Chain confirmation observed', {
+        txHash,
+        status: polled.status,
+      });
+    } else {
+      confirmationLogger.warn('Chain confirmation did not succeed', {
+        txHash,
+        status: polled.status,
+      });
+    }
+
     return {
       txHash,
       status: polled.status,
       ...(resultXdr ? { resultXdr } : {}),
     };
+  }
+
+  /**
+   * Records a chain-confirmation outcome with bounded label cardinality
+   * (success | failed | not_found | unknown | error) plus its duration.
+   */
+  private recordChainConfirmation(status: string, startedAt: number): void {
+    chainConfirmationCounter.inc({ status });
+    chainConfirmationDurationHistogram.observe({ status }, (Date.now() - startedAt) / 1000);
   }
 
   /**

@@ -1,0 +1,104 @@
+# Issue #409 – Reusable workflow: Soroban smart-contract checks
+# Least-privilege: read-only checkout; artifacts uploaded for inspection.
+name: Contracts CI (reusable)
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            contracts
+            contracts/fuzz
+      - name: Format check
+        run: cargo fmt --all -- --check
+        working-directory: contracts
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+        working-directory: contracts
+      - name: Run tests
+        run: cargo test -- --test-threads=1
+        working-directory: contracts
+      - name: Formal verification (loan_manager invariants)
+        run: cargo test -p loan_manager formal_verification -- --test-threads=1 --nocapture
+        working-directory: contracts
+      - name: Build contracts for wasm32 and enforce size budget
+        run: |
+          set -euo pipefail
+          cargo build --target wasm32-unknown-unknown --release
+          max_bytes=$((256 * 1024))
+          shopt -s nullglob
+          wasm_files=(target/wasm32-unknown-unknown/release/*.wasm)
+          if [ "${#wasm_files[@]}" -eq 0 ]; then
+            echo "::error::No wasm artifacts were produced."
+            exit 1
+          fi
+          for wasm in "${wasm_files[@]}"; do
+            size_bytes=$(stat -c%s "$wasm")
+            size_kib=$(( (size_bytes + 1023) / 1024 ))
+            echo "$(basename "$wasm"): ${size_bytes} bytes (${size_kib} KiB), budget ${max_bytes} bytes"
+            if [ "$size_bytes" -gt "$max_bytes" ]; then
+              echo "::error file=$wasm::WASM artifact exceeds the 256 KiB per-contract budget."
+              exit 1
+            fi
+          done
+        working-directory: contracts
+      - name: Analyze per-function contract sizes
+        run: bash ../scripts/analyze-contract-sizes.sh ./target/wasm32-unknown-unknown/release
+        working-directory: contracts
+      - name: Check for size regressions
+        if: github.event_name == 'pull_request'
+        run: |
+          bash ../scripts/check-wasm-size-regression.sh origin/main ./target/wasm32-unknown-unknown/release || exit_code=$?
+          if [ "${exit_code:-0}" -ne 0 ]; then
+            echo "::warning::Size regression detected."
+            exit 1
+          fi
+        working-directory: contracts
+        continue-on-error: true
+      - name: Generate optimization report
+        run: bash ../scripts/optimize-wasm-sizes.sh ./target/wasm32-unknown-unknown/release ./.wasm-optimized
+        working-directory: contracts
+        continue-on-error: true
+      - name: Upload size analysis and optimization report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: wasm-optimization-report
+          path: |
+            contracts/.wasm-optimized/
+            contracts/size-budgets.json
+          retention-days: 30
+      - name: Upload wasm artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: contracts-wasm
+          path: contracts/target/wasm32-unknown-unknown/release/*.wasm
+          if-no-files-found: error
+      - name: Install tarpaulin
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-tarpaulin
+      - name: Run coverage
+        run: cargo tarpaulin --out Xml
+        working-directory: contracts
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: contracts-coverage
+          path: contracts/cobertura.xml
+          retention-days: 7
+      - name: Check fuzz targets compile
+        run: cargo check
+        working-directory: contracts/fuzz

@@ -102,9 +102,44 @@ Integrated the **RemitLend Quests** sidebar to tie financial actions directly to
 
 ---
 
+## Lender Position Monitoring with Consistency Markers
+
+### Position Metrics
+
+Each lender position surfaces the following metrics, all derived from authoritative chain/API sources (never client-side estimates):
+
+- **Supplied** — principal deployed into the pool, read from the pool contract
+- **Borrowed** — outstanding principal drawn against the pool
+- **Utilization** — `borrowed / supplied`, computed from the same authoritative snapshot
+- **Accrued Interest** — interest earned to date, sourced from the indexer/API accrual endpoint
+
+### Consistency Markers
+
+Every position row carries explicit consistency markers so lenders can judge data trustworthiness at a glance:
+
+- **Data source** — which authoritative origin produced the row (`chain` or `api`)
+- **Last-updated timestamp** — when the snapshot was captured, rendered in the lender's locale
+- **Staleness indicator** — a badge that flips to *Stale* once the snapshot exceeds the freshness threshold
+- **Sync / retry state** — `synced`, `syncing`, `retrying`, or `failed`, with the attempt count when retrying
+
+### Authorization, Failure, and Retry Behavior
+
+- **Authorization** — position data is only fetched and rendered for the authenticated lender; unauthorized responses render an explicit access-denied state rather than empty metrics
+- **Failure** — dependency failures (chain RPC, indexer/API) render a structured error with the failing source and a retry affordance; metrics are never silently zeroed
+- **Retry** — transient failures retry with bounded exponential backoff and a capped attempt count; the retry state is reflected in the sync marker
+- **Stale data** — when a refresh fails but a prior snapshot exists, the last-known values remain visible and are clearly marked stale with their original timestamp
+- **Dependency failure** — a failed dependency degrades only the affected marker; unaffected metrics keep their last authoritative values
+
+### Observability
+
+- Structured errors carry the position id, data source, and failure class
+- Sync/retry transitions emit audit events for operational diagnostics
+- Metrics track fetch latency, staleness duration, and retry counts per position
+
+---
+
 ## Design Goals for Future Iterations
 
-- Historical yield export (CSV / PDF)
 - Multi-pool rebalancing flow
 - Notification alerts for pool health drops
 - Mobile-optimized position monitoring view

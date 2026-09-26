@@ -9,15 +9,19 @@ const loadApp = async () => {
     .fn<(sql: string, params?: unknown[]) => Promise<{ rows: unknown[]; rowCount: number }>>()
     .mockResolvedValue({ rows: [], rowCount: 0 });
 
-  jest.unstable_mockModule('../db/connection.js', () => ({
-    default: {
+  jest.unstable_mockModule('../db/connection.js', () => {
+    // `dbConnectionLeakDetector` and `piiCrypto` import the named `pool` export,
+    // so the mock must expose it alongside the default export.
+    const connection = { query: mockQuery, on: jest.fn(), connect: jest.fn() };
+    return {
+      default: connection,
+      pool: connection,
       query: mockQuery,
-    },
-    query: mockQuery,
-    getClient: jest.fn(),
-    closePool: jest.fn(),
-    withTransaction: jest.fn(),
-  }));
+      getClient: jest.fn(),
+      closePool: jest.fn(),
+      withTransaction: jest.fn(),
+    };
+  });
 
   jest.unstable_mockModule('../services/cacheService.js', () => ({
     cacheService: {

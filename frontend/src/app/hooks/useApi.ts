@@ -20,6 +20,7 @@ import {
 import { LoanStatusBadge, type LoanStatus } from "../components/ui/LoanStatusBadge";
 import { useUserStore } from "../stores/useUserStore";
 import { isJwtExpired, logoutUser, SessionExpiredError } from "../lib/session";
+import { TRACEPARENT_HEADER, outboundTraceparent } from "../lib/traceContext";
 import { useWallet } from "../components/providers/WalletProvider";
 import { useContractToast } from "./useContractToast";
 import { toast } from "sonner";
@@ -135,6 +136,14 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
     if (!headers.has("Authorization")) {
       headers.set("Authorization", `Bearer ${token}`);
     }
+  }
+
+  // Attach a W3C trace context so the whole flow (wallet → API → indexer →
+  // chain confirmation) can be correlated from logs (#414). Callers may pass
+  // their own traceparent to continue a trace they started, e.g. a wallet
+  // confirmation dialog; otherwise a new root trace begins here.
+  if (!headers.has(TRACEPARENT_HEADER)) {
+    headers.set(TRACEPARENT_HEADER, outboundTraceparent());
   }
 
   const response = await fetch(`${API_URL}${path}`, { ...options, headers });
@@ -1454,11 +1463,7 @@ export function useDepositorPortfolio(
 // ─── Notification types & hooks ───────────────────────────────────────────────
 
 export type NotificationType =
-  | "loan_approved"
-  | "repayment_due"
-  | "repayment_confirmed"
-  | "loan_defaulted"
-  | "score_changed";
+  "loan_approved" | "repayment_due" | "repayment_confirmed" | "loan_defaulted" | "score_changed";
 
 export interface AppNotification {
   id: number;

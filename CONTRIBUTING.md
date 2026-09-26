@@ -145,6 +145,22 @@ technologies, so accessibility is a correctness requirement, not a nice-to-have.
   `components/ui/Modal`, etc.) rather than re-implementing focus traps and ARIA
   wiring.
 
+**Charts and data visualisations:**
+
+- Every chart must ship an accessible data table that exposes the same values as
+  the visualisation. Render it with the shared `ChartDataTable` primitive
+  (`components/charts/ChartDataTable`) so the table is visually hidden by default
+  but remains in the accessibility tree, and is reachable via a visible
+  "View as table" toggle.
+- Chart elements (bars, points, slices, legend entries) must be keyboard
+  navigable: focusable with `Tab`, traversable with the arrow keys, and
+  activatable with `Enter`/`Space` where the element has an action. Announce the
+  focused datum through an `aria-live` region or `aria-describedby`.
+- Bound the rendered table: cap rows at the shared `MAX_CHART_TABLE_ROWS` limit
+  and paginate or virtualise beyond it so large datasets cannot exhaust the DOM.
+- Add a focused test for each chart covering the table contents, keyboard
+  traversal, and the row cap.
+
 **Automated checks:**
 
 - The **Accessibility** GitHub Actions workflow (`.github/workflows/a11y.yml`)
@@ -164,6 +180,50 @@ technologies, so accessibility is a correctness requirement, not a nice-to-have.
 - For live feedback while running the dev server, enable the in-browser axe
   overlay by rendering `@axe-core/react` from a client component in development
   only (dependency already declared in `frontend/package.json`).
+
+## Visual Regression Requirements
+
+Critical financial states must not change visually without an explicit,
+reviewable diff. Visual regression coverage lives alongside the Playwright e2e
+suite and runs in CI.
+
+**What counts as a critical financial state:**
+
+- Loan amounts, outstanding balances, accrued interest, and repayment
+  schedules.
+- Transaction lifecycle states: pending, submitted, confirmed, failed, and
+  retried.
+- Stale or unavailable data (dependency failure) and authorization failure
+  states.
+- Boundary values: zero, minimum, and maximum representable amounts.
+
+**Rules for visual regression tests:**
+
+- Derive every displayed amount, status, and chain state from the same
+  authoritative source the app uses at runtime (API/contract responses or the
+  shared financial formatting utilities). **Never hard-code or mock financial
+  arithmetic in a story or snapshot** — a mocked number can silently diverge
+  from production.
+- Cover the success path plus the failure paths listed above (authorization
+  failure, boundary values, retries, stale data, dependency failure) for each
+  critical financial surface you touch.
+- Keep snapshots deterministic: pin the viewport, freeze time and locale, and
+  disable animations (`prefers-reduced-motion`) so diffs reflect real changes
+  only.
+- When a visual change is intentional, update the baseline in the same PR and
+  call it out in the PR description with before/after images.
+
+**Running locally:**
+
+```bash
+cd frontend
+npm run build
+npx playwright test e2e/visual --project=chromium --update-snapshots
+```
+
+Omit `--update-snapshots` to verify against the committed baselines the way CI
+does. New critical financial surfaces must add their route/state to the visual
+regression suite in the same PR that introduces them.
 
 ## Style Guides
 

@@ -4,6 +4,11 @@ For the authentication and authorization model (roles, scopes, JWT flow,
 API-key namespaces, cookie attributes, and route guards) see
 [docs/SECURITY-MODEL.md](docs/SECURITY-MODEL.md).
 
+For what our security posture explicitly relies on — and what it deliberately
+does not cover (assumptions, accepted risks, compensating controls, review
+cadence) — see [docs/SECURITY-ASSUMPTIONS.md](docs/SECURITY-ASSUMPTIONS.md).
+
+
 ## Supported Versions
 
 Only the current `main` branch and the last tagged release are supported with security updates.

@@ -39,6 +39,28 @@ export default defineConfig({
       testDir: "./e2e/visual",
       use: { ...devices["Desktop Chrome"] },
     },
+    // Issue #406: mobile performance regression gates.
+    // Uses Pixel 5 viewport (393×851, dpr=2.75) to catch layout shifts,
+    // oversized bundles, and interaction regressions that only appear on
+    // small viewports with constrained network simulation.
+    {
+      name: "mobile-chrome",
+      testIgnore: "visual/**",
+      use: {
+        ...devices["Pixel 5"],
+        // Simulate a mid-tier 4G connection so performance measurements
+        // are representative of the target demographic (migrant workers
+        // on mobile data, not fibre).
+        launchOptions: {
+          args: ["--enable-features=NetworkService"],
+        },
+      },
+    },
+    {
+      name: "mobile-safari",
+      testIgnore: "visual/**",
+      use: { ...devices["iPhone 13"] },
+    },
   ],
 
   webServer: {

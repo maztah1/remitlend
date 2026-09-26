@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
+import {
+  TRACEPARENT_HEADER,
+  outboundTraceparent,
+  parseTraceparent,
+} from "../../../../lib/traceContext";
 
 interface RevealRequestBody {
   field: "email" | "phone" | "name";
@@ -43,6 +48,13 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   }
 
   const requestId = crypto.randomUUID();
+  // Continue the browser-originated trace onto the backend (#414). The reveal
+  // route is the one BFF hop that talks to the API directly rather than through
+  // the shared client, so it must forward the trace explicitly.
+  const incomingTrace = parseTraceparent(request.headers.get(TRACEPARENT_HEADER));
+  // Invalid/absent upstream values yield a fresh root trace rather than a
+  // failure — the admin reveal must never be blocked by broken instrumentation.
+  const traceparent = outboundTraceparent(incomingTrace ?? undefined);
 
   try {
     const backendRes = await fetch(
@@ -53,6 +65,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           "Content-Type": "application/json",
           Authorization: `Bearer ${sessionToken}`,
           "X-Request-Id": requestId,
+          [TRACEPARENT_HEADER]: traceparent,
         },
         body: JSON.stringify({
           field: body.field,

@@ -2,6 +2,7 @@
 
 import { useUserStore } from "../stores/useUserStore";
 import { useWalletStore } from "../stores/useWalletStore";
+import { captureSessionIntent, sessionExpiredRedirect } from "./sessionRecovery";
 
 const USER_STORAGE_KEY = "remitlend-user";
 const WALLET_STORAGE_KEY = "remitlend-wallet";
@@ -48,6 +49,9 @@ export function clearSessionState() {
 }
 
 export function logoutUser(reason: "manual" | "expired" = "manual") {
+  if (reason === "expired") {
+    captureSessionIntent();
+  }
   clearSessionState();
 
   if (typeof window === "undefined" || logoutTriggered) {
@@ -55,7 +59,7 @@ export function logoutUser(reason: "manual" | "expired" = "manual") {
   }
 
   logoutTriggered = true;
-  const destination = reason === "expired" ? "/" : "/";
+  const destination = reason === "expired" ? sessionExpiredRedirect() : "/";
   window.setTimeout(() => {
     logoutTriggered = false;
   }, 0);

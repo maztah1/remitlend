@@ -1,0 +1,67 @@
+# .gitleaks.toml — gitleaks configuration for RemitLend.
+#
+# Issue #359: secrets inventory and automated exposure scanning.
+# This file governs the `secrets-scan` job in .github/workflows/ci.yml.
+#
+# Reference: https://github.com/gitleaks/gitleaks#configuration
+
+title = "RemitLend Gitleaks Configuration"
+
+[extend]
+# Inherit the upstream default ruleset so we get all standard patterns
+# (AWS keys, GitHub tokens, Stripe keys, RSA/EC private keys, etc.).
+useDefault = true
+
+# ── Allow-list entries ────────────────────────────────────────────────────────
+# Each entry specifies a pattern that gitleaks would flag as a secret but is
+# known to be a safe documentation or test value.  Add entries here instead of
+# suppressing the CI job.
+#
+# Format:
+#   [[allowlists]]
+#   description = "Human-readable reason"
+#   regexTarget = "line"       # scan the matched line, not the whole secret
+#   regex = '''pattern'''
+
+[[allowlists]]
+description = "Documented placeholder JWT secret in .env.example and docs"
+regexTarget = "line"
+regex = '''your-super-secret-jwt-key-change-in-production'''
+
+[[allowlists]]
+description = "Placeholder INTERNAL_API_KEY in .env.example"
+regexTarget = "line"
+regex = '''INTERNAL_API_KEY=change-me'''
+
+[[allowlists]]
+description = "CI test environment JWT_SECRET injected via env in ci.yml"
+regexTarget = "line"
+regex = '''JWT_SECRET: test_jwt_secret'''
+
+[[allowlists]]
+description = "CI INTERNAL_API_KEY for backend tests in ci.yml"
+regexTarget = "line"
+regex = '''INTERNAL_API_KEY: test_internal_api_key'''
+
+[[allowlists]]
+description = "CI LOAN_MANAGER_ADMIN_SECRET for backend tests in ci.yml"
+regexTarget = "line"
+regex = '''LOAN_MANAGER_ADMIN_SECRET: test_admin_secret'''
+
+[[allowlists]]
+description = "Stellar all-zero contract addresses used as test fixtures"
+regexTarget = "line"
+regex = '''C[A]{54}|C[B]{54}|C[C]{54}|C[D]{54}|C[E]{54}'''
+
+# ── Path exclusions ───────────────────────────────────────────────────────────
+# Directories that should never be scanned (generated artefacts, dependencies).
+
+[allowlists]
+paths = [
+  '''node_modules''',
+  '''target''',
+  '''.next''',
+  '''\.wasm$''',
+  '''package-lock\.json''',
+  '''Cargo\.lock''',
+]

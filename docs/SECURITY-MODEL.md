@@ -3,7 +3,15 @@
 This document describes the security model for the RemitLend backend API: how
 identities are established, how roles map to scopes, and which scope guard
 protects each route group. See also [SECURITY.md](../SECURITY.md) for the
-vulnerability-disclosure policy.
+vulnerability-disclosure policy and the [loan lifecycle threat
+model](./THREAT_MODEL_LOAN_LIFECYCLE.md).
+
+Related security documents:
+
+- [Data Retention & Deletion Matrix](security/data-retention-matrix.md)
+- [Privacy-Preserving Remittance Evidence Architecture](security/privacy-preserving-architecture.md)
+- [Privileged Action Approval Policy](security/privileged-action-approval-policy.md)
+- [Continuous Authorization Matrix Tests](security/authorization-matrix-tests.md)
 
 ---
 
@@ -56,6 +64,10 @@ Available scopes: `admin:disputes`, `admin:indexer`, `admin:webhooks`,
 `admin:loans`.
 
 Implemented in `backend/src/middleware/auth.ts` (`requireApiKey`).
+
+For the assumptions and accepted limitations that surround this model (and the
+compensating controls for each), see
+[SECURITY-ASSUMPTIONS.md](SECURITY-ASSUMPTIONS.md).
 
 ---
 

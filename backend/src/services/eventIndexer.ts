@@ -2,6 +2,7 @@ import { rpc as SorobanRpc, scValToNative, xdr } from '@stellar/stellar-sdk';
 import { type PoolClient, query, withTransaction } from '../db/connection.js';
 import logger from '../utils/logger.js';
 import { createRequestId, runWithRequestContext } from '../utils/requestContext.js';
+import { createTraceContext, outboundTraceparent } from '../utils/traceContext.js';
 import {
   type IndexedLoanEvent,
   SUPPORTED_WEBHOOK_EVENT_TYPES,
@@ -441,59 +442,74 @@ export class EventIndexer {
   private async processChunk(startLedger: number, endLedger: number): Promise<ProcessChunkResult> {
     const correlationId = `indexer-${createRequestId()}`;
 
-    return runWithRequestContext(correlationId, async () => {
-      if (endLedger < startLedger) {
-        logger.withContext().warn('Skipping invalid ledger range', {
+    // Each chunk is its own traced unit of work (#414). Logs emitted while
+    // scanning and storing events carry traceId/spanId, and the outbound
+    // traceparent is logged so a chunk can be joined with the chain
+    // confirmation logs of the API that submitted the observed transaction.
+    return runWithRequestContext(
+      correlationId,
+      async () => {
+        logger.withContext().info('Indexer chunk starting', {
+          module: 'indexer',
+          action: 'process-chunk',
+          traceparent: outboundTraceparent(),
           startLedger,
           endLedger,
         });
-        return {
-          lastProcessedLedger: Math.max(startLedger - 1, 0),
-          fetchedEvents: 0,
-          insertedEvents: 0,
-        };
-        throw AppError.badRequest(
-          `Invalid ledger range: endLedger (${endLedger}) cannot be less than startLedger (${startLedger})`,
-        );
-      }
-
-      try {
-        const events = await this.fetchEventsInRange(startLedger, endLedger);
-        if (events.length === 0) {
+        if (endLedger < startLedger) {
+          logger.withContext().warn('Skipping invalid ledger range', {
+            startLedger,
+            endLedger,
+          });
           return {
-            lastProcessedLedger: endLedger,
+            lastProcessedLedger: Math.max(startLedger - 1, 0),
             fetchedEvents: 0,
             insertedEvents: 0,
           };
+          throw AppError.badRequest(
+            `Invalid ledger range: endLedger (${endLedger}) cannot be less than startLedger (${startLedger})`,
+          );
         }
 
-        const storeResult = await this.storeEvents(events);
-        const maxLedger = events.reduce(
-          (max, event) => Math.max(max, Number(event.ledger)),
-          startLedger,
-        );
+        try {
+          const events = await this.fetchEventsInRange(startLedger, endLedger);
+          if (events.length === 0) {
+            return {
+              lastProcessedLedger: endLedger,
+              fetchedEvents: 0,
+              insertedEvents: 0,
+            };
+          }
 
-        logger.withContext().info('Indexer processed chunk', {
-          startLedger,
-          endLedger,
-          fetchedEvents: events.length,
-          insertedEvents: storeResult.insertedCount,
-        });
+          const storeResult = await this.storeEvents(events);
+          const maxLedger = events.reduce(
+            (max, event) => Math.max(max, Number(event.ledger)),
+            startLedger,
+          );
 
-        return {
-          lastProcessedLedger: Math.max(maxLedger, endLedger),
-          fetchedEvents: events.length,
-          insertedEvents: storeResult.insertedCount,
-        };
-      } catch (error) {
-        logger.withContext().error('Error processing event chunk', {
-          startLedger,
-          endLedger,
-          error,
-        });
-        throw error;
-      }
-    });
+          logger.withContext().info('Indexer processed chunk', {
+            startLedger,
+            endLedger,
+            fetchedEvents: events.length,
+            insertedEvents: storeResult.insertedCount,
+          });
+
+          return {
+            lastProcessedLedger: Math.max(maxLedger, endLedger),
+            fetchedEvents: events.length,
+            insertedEvents: storeResult.insertedCount,
+          };
+        } catch (error) {
+          logger.withContext().error('Error processing event chunk', {
+            startLedger,
+            endLedger,
+            error,
+          });
+          throw error;
+        }
+      },
+      createTraceContext(),
+    );
   }
 
   private async fetchEventsInRange(
@@ -901,7 +917,9 @@ export class EventIndexer {
           address = toAddr;
         }
       } catch (error) {
-        logger.withContext().warn('Failed to decode NftTransferred event', { eventId: event.id, error });
+        logger
+          .withContext()
+          .warn('Failed to decode NftTransferred event', { eventId: event.id, error });
         return null;
       }
     } else if (type === 'LoanRefinanced') {

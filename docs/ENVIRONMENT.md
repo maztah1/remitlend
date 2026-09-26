@@ -36,6 +36,7 @@ stricter rate limit (10 requests/minute/IP) to prevent abuse.
 | Variable | Dev | Staging | Prod | Default | Description | Source |
 |---|---|---|---|---|---|---|
 | `LOG_LEVEL` | — | — | — | `debug` (dev) / `info` (other envs) | Winston log level override (`error`, `warn`, `info`, `http`, `debug`). Falls back to the `NODE_ENV` default when unset or invalid. | `backend/src/utils/logger.ts` |
+| `TRACE_CONTEXT_SAMPLE_RATE` | — | — | — | `1` | Fraction of *root* traces (requests arriving without a `traceparent`) that are marked sampled. Values outside `[0, 1]` fall back to `1`. Inheriting a caller's sampled flag is unaffected. | `backend/src/utils/traceContext.ts` |
 | `CORS_ALLOWED_ORIGINS` | ✓ | ✓ | ✓ | `http://localhost:3000,http://localhost:3001` | Comma-separated origins allowed by CORS | `backend/src/config/index.ts` |
 | `FRONTEND_URL` | ✓ | ✓ | ✓ | `http://localhost:3000` | Frontend base URL used for links | `backend/src/config/index.ts` |
 | `PORT` | ✓ | ✓ | ✓ | `3001` | HTTP port the API listens on | `backend/src/index.ts` |

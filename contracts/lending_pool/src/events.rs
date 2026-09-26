@@ -75,3 +75,8 @@ pub fn price_updated(
     env.events()
         .publish(topics, (ledger_seq, total_managed_assets, total_shares));
 }
+
+pub fn pause_flags_updated(env: &Env, flags: crate::PauseFlags) {
+    let topics = (Symbol::new(env, "PauseFlagsUpdated"),);
+    env.events().publish(topics, flags.flags);
+}

@@ -4,7 +4,10 @@ Operational runbooks for on-call engineers working on the RemitLend platform.
 
 ## Index
 
-- [Indexer Recovery](indexer-recovery.md) — Responding to indexer lag, RPC outages, and quarantined events.
+- [Contract Deployment and Migration Playbook](contract-deployment-migration.md) — End-to-end guide for deploying new contracts, upgrading existing ones, and running storage and database migrations safely.
+- [Indexer Correctness and Recovery Guide](indexer-correctness-recovery.md) — Verifying indexer correctness, diagnosing data gaps, and recovering from lag, RPC outages, quarantine spikes, and corrupted state.
+- [Indexer Recovery](indexer-recovery.md) — Quick-reference procedures for indexer lag, RPC outages, and quarantined events.
+- [PII Handling and Data Subject Request Runbook](pii-handling-runbook.md) — Encryption key management, DSAR fulfilment, deletion/anonymisation, and breach response.
 - [Troubleshooting Guide](troubleshooting.md) — Comprehensive troubleshooting for development and production issues.
 
 ## Purpose
