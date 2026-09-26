@@ -1,3 +1,18 @@
+# ─── RemitLend CI ─────────────────────────────────────────────────────────────
+#
+# Issue #409 – split CI into least-privilege reusable workflows.
+#
+# This orchestrator only declares *which* reusable jobs to run and *when*.
+# Each job lives in a dedicated reusable workflow under .github/workflows/
+# with the minimum permissions it actually needs (mostly `contents: read`).
+#
+# Dependency graph:
+#   supply-chain-audit ──► money-policy ──► backend
+#                                       └──► frontend ──► e2e (+ mobile #406)
+#                                       └──► scripts-typecheck
+#                       ──► migration-check (path-filtered)
+#                       ──► contracts ──► contract-compatibility (#407)
+# ─────────────────────────────────────────────────────────────────────────────
 name: RemitLend CI
 
 on:
@@ -6,121 +21,42 @@ on:
   pull_request:
     branches: [main]
 
-jobs:
-  supply-chain-audit:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - name: Block compromised packages
-        run: |
-          echo "Scanning lockfiles for known malicious packages..."
-          BLOCKED="plain-crypto-js"
-          for lockfile in backend/package-lock.json frontend/package-lock.json scripts/package-lock.json; do
-            if [ -f "$lockfile" ] && grep -q "$BLOCKED" "$lockfile"; then
-              echo "::error::SUPPLY CHAIN ALERT: $lockfile contains $BLOCKED (confirmed malware)"
-              exit 1
-            fi
-          done
-          if grep -r '"axios": "1\.14\.' --include="package-lock.json" .; then
-            echo "::error::SUPPLY CHAIN ALERT: axios 1.14.x detected (compromised version)"
-            exit 1
-          fi
-          echo "No known malicious packages found."
+# Deny all permissions at the root level; individual reusable workflows
+# declare only what they need (all are contents: read only).
+permissions: {}
 
-  # Issue #1378: single source of truth for stroop scale, rounding mode,
-  # display precision and pro-rata allocation strategy. `scripts/gen-money.ts`
-  # derives `contracts/money/src/policy.rs`,
-  # `backend/src/money/policy.generated.ts` and
-  # `frontend/lib/money/policy.generated.ts` from `money-policy.json`; this
-  # job fails the build the moment any of those three generated files would
-  # differ from what's committed, so the layers can never drift back apart.
+jobs:
+  # ── 1. Supply-chain audit ───────────────────────────────────────────────────
+  supply-chain-audit:
+    uses: ./.github/workflows/reusable-supply-chain-audit.yml
+    permissions:
+      contents: read
+
+  # ── 2. Money-policy drift check ─────────────────────────────────────────────
   money-policy:
     needs: supply-chain-audit
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - name: Use Node.js 20
-        uses: actions/setup-node@v7
-        with:
-          node-version: 20
-          cache: "npm"
-          cache-dependency-path: scripts/package-lock.json
-      - name: Install dependencies
-        run: npm ci
-        working-directory: scripts
-      - name: Check generated money-policy artifacts are up to date
-        run: npx ts-node gen-money.ts --check
-        working-directory: scripts
+    uses: ./.github/workflows/reusable-money-policy.yml
+    permissions:
+      contents: read
 
+  # ── 3. Backend lint / build / test ──────────────────────────────────────────
   backend:
     needs: [supply-chain-audit, money-policy]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - name: Use Node.js 20
-        uses: actions/setup-node@v7
-        with:
-          node-version: 20
-          cache: "npm"
-          cache-dependency-path: backend/package-lock.json
-      - name: Install dependencies
-        run: npm ci
-        working-directory: backend
-      - name: Lint
-        run: npm run lint
-        working-directory: backend
-      - name: Build
-        run: npm run build
-        working-directory: backend
-      - name: Type check
-        run: npm run typecheck
-        working-directory: backend
-      - name: Run tests
-        run: npm test
-        working-directory: backend
-        env:
-          NODE_ENV: test
-          DATABASE_URL: postgres://user:pass@localhost:5432/test
-          REDIS_URL: redis://localhost:6379
-          JWT_SECRET: test_jwt_secret
-          STELLAR_RPC_URL: https://rpc.test.invalid
-          STELLAR_NETWORK_PASSPHRASE: Test SDF Network ; September 2015
-          LOAN_MANAGER_CONTRACT_ID: CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-          LENDING_POOL_CONTRACT_ID: CBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
-          REMITTANCE_NFT_CONTRACT_ID: CDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
-          MULTISIG_GOVERNANCE_CONTRACT_ID: CEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE
-          POOL_TOKEN_ADDRESS: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
-          LOAN_MANAGER_ADMIN_SECRET: test_admin_secret
-          INTERNAL_API_KEY: test_internal_api_key
-          FRONTEND_URL: https://frontend.example.com
-      - name: Scan for plaintext PII in logs
-        run: |
-          echo "Scanning for plaintext PII in logger output patterns..."
-          PII_PATTERNS=(
-            'logger.*\.info.*recipient_email'
-            'logger.*\.info.*recipient_phone'
-            'logger.*\.info.*recipient_name'
-            'console\.log.*email.*@.*\.com'
-            'console\.log.*phone.*\+[0-9]'
-          )
-          FOUND=0
-          for pattern in "${PII_PATTERNS[@]}"; do
-            if grep -rn "$pattern" src/ --include="*.ts" 2>/dev/null; then
-              echo "::error::PII leak detected in logger output: $pattern"
-              FOUND=1
-            fi
-          done
-          if [ "$FOUND" -eq 1 ]; then
-            exit 1
-          fi
-          echo "No plaintext PII found in logger output."
+    uses: ./.github/workflows/reusable-backend.yml
+    permissions:
+      contents: read
 
+  # ── 4. Migration path filter ─────────────────────────────────────────────────
+  # Checks whether backend/migrations/** or backend/package.json changed.
+  # The output is consumed by the migration-check job below.
   migration-paths:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       migrations: ${{ steps.filter.outputs.migrations }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v4
         id: filter
         with:
@@ -129,194 +65,81 @@ jobs:
               - 'backend/migrations/**'
               - 'backend/package.json'
 
+  # ── 5. Migration round-trip check ────────────────────────────────────────────
   migration-check:
     needs: [supply-chain-audit, migration-paths]
     if: github.event_name == 'push' || needs.migration-paths.outputs.migrations == 'true'
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: pguser
-          POSTGRES_PASSWORD: pgpass
-          POSTGRES_DB: remitlend_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U pguser"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    steps:
-      - uses: actions/checkout@v7
-      - name: Use Node.js 20
-        uses: actions/setup-node@v7
-        with:
-          node-version: 20
-          cache: "npm"
-          cache-dependency-path: backend/package-lock.json
-      - name: Install dependencies
-        run: npm ci
-        working-directory: backend
-      - name: Migrate up from empty schema
-        run: npm run migrate:up
-        working-directory: backend
-        env:
-          DATABASE_URL: postgres://pguser:pgpass@localhost:5432/remitlend_test
-      - name: Migrate all the way down (reversibility check)
-        run: |
-          # Count migrations and roll them all back one by one
-          MIGRATION_COUNT=$(ls migrations/*.js 2>/dev/null | wc -l)
-          for i in $(seq 1 "$MIGRATION_COUNT"); do
-            npm run migrate:down -- --count 1
-          done
-        working-directory: backend
-        env:
-          DATABASE_URL: postgres://pguser:pgpass@localhost:5432/remitlend_test
-      - name: Migrate up again (ordering + idempotency check)
-        run: npm run migrate:up
-        working-directory: backend
-        env:
-          DATABASE_URL: postgres://pguser:pgpass@localhost:5432/remitlend_test
-      - name: Verify no plaintext PII columns exist
-        run: |
-          echo "Checking for plaintext PII columns..."
-          PII_COLUMNS=(
-            'recipient_email'
-            'recipient_phone'
-            'recipient_name'
-            'plaintext_email'
-            'plaintext_phone'
-            'plaintext_name'
-          )
-          FOUND=0
-          for col in "${PII_COLUMNS[@]}"; do
-            RESULT=$(psql postgres://pguser:pgpass@localhost:5432/remitlend_test -tAc \
-              "SELECT column_name FROM information_schema.columns WHERE column_name = '$col';" 2>/dev/null)
-            if [ -n "$RESULT" ]; then
-              echo "::error::Plaintext PII column found: $col"
-              FOUND=1
-            fi
-          done
-          if [ "$FOUND" -eq 1 ]; then
-            echo "Plaintext PII columns detected - migration check failed"
-            exit 1
-          fi
-          echo "No plaintext PII columns found."
-        env:
-          PGPASSWORD: pgpass
+    uses: ./.github/workflows/reusable-migration-check.yml
+    permissions:
+      contents: read
 
+  # ── 6. Frontend lint / build / test / perf-budget ────────────────────────────
+  # Issue #406: mobile performance budget check runs inside this workflow.
   frontend:
     needs: [supply-chain-audit, money-policy]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - name: Use Node.js 20
-        uses: actions/setup-node@v7
-        with:
-          node-version: 20
-          cache: "npm"
-          cache-dependency-path: frontend/package-lock.json
-      - name: Install dependencies
-        run: npm ci
-        working-directory: frontend
-      - name: Lint
-        run: npm run lint
-        working-directory: frontend
-      - name: Type check
-        run: npm run typecheck
-        working-directory: frontend
-      - name: Check translation parity
-        run: npm run i18n:check
-        working-directory: frontend
-      - name: Unit tests
-        run: npm test
-        working-directory: frontend
-        env:
-          NODE_ENV: test
-      - name: Build
-        run: npm run build
-        working-directory: frontend
-      - name: Check performance budget
-        run: npm run performance:budget
-        working-directory: frontend
+    uses: ./.github/workflows/reusable-frontend.yml
+    permissions:
+      contents: read
 
+  # ── 7. Scripts typecheck ─────────────────────────────────────────────────────
   scripts-typecheck:
     needs: supply-chain-audit
     runs-on: ubuntu-latest
-
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v7
-
+      - uses: actions/checkout@v4
       - name: Use Node.js 20
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
           cache-dependency-path: scripts/package-lock.json
-
       - name: Install dependencies
         run: npm ci
         working-directory: scripts
-
       - name: Type check deploy scripts
         run: npm run typecheck
         working-directory: scripts
 
-  e2e:
-    needs: [supply-chain-audit, frontend]
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' || contains(github.event.pull_request.changed_files, 'frontend/')
-    steps:
-      - uses: actions/checkout@v7
-      - name: Use Node.js 20
-        uses: actions/setup-node@v7
-        with:
-          node-version: 20
-          cache: "npm"
-          cache-dependency-path: frontend/package-lock.json
-      - name: Install dependencies
-        run: npm ci
-        working-directory: frontend
-      - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium
-        working-directory: frontend
-      - name: Run e2e tests
-        run: npx playwright test --project=chromium
-        working-directory: frontend
-        env:
-          NODE_ENV: test
-          CI: true
-      - name: Upload Playwright report
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: playwright-report
-          path: frontend/playwright-report/
-          retention-days: 7
-
+  # ── 8. Env-docs consistency ──────────────────────────────────────────────────
   env-docs-check:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - name: Use Node.js 20
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@v4
         with:
           node-version: 20
       - name: Check env docs are in sync
         run: node scripts/check-env-docs.mjs
 
+  # ── 9. Error-code mapping check ──────────────────────────────────────────────
   error-code-mapping-check:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - name: Use Node.js 20
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@v4
         with:
           node-version: 20
       - name: Check every backend ErrorCode has a frontend message mapping
         run: node scripts/check-error-code-mappings.mjs
 
+  # ── 10. End-to-end tests (desktop + mobile) ───────────────────────────────────
+  # Issue #406: mobile-chrome and mobile-safari Playwright projects run here.
+  e2e:
+    needs: [supply-chain-audit, frontend]
+    if: github.event_name == 'push' || contains(github.event.pull_request.changed_files, 'frontend/')
+    uses: ./.github/workflows/reusable-e2e.yml
+    permissions:
+      contents: read
+
+  # ── 11. Smart-contract CI ─────────────────────────────────────────────────────
   contracts:
     needs: money-policy
     runs-on: ubuntu-latest
@@ -427,3 +250,93 @@ jobs:
       - name: Check fuzz targets compile
         run: cargo check
         working-directory: contracts/fuzz
+
+  # ── Issue #359: Secrets inventory and automated exposure scanning ─────────
+  # Scans every file tracked by git for accidental secret commits using two
+  # complementary tools:
+  #   1. gitleaks — git-history-aware pattern scanner (catches past leaks too)
+  #   2. grep-based heuristics — lightweight zero-install check for common
+  #      high-entropy strings and placeholder values left in committed files
+  #
+  # The job is intentionally placed last so it does not block fast-feedback
+  # jobs (lint, typecheck) on PRs but still gates merges to main.
+  secrets-scan:
+    needs: supply-chain-audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Fetch full history so gitleaks can scan all commits, not just HEAD.
+          fetch-depth: 0
+
+      - name: Run gitleaks secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # GITLEAKS_LICENSE is required only for organisations on the paid plan.
+          # For public / open-source repos the free tier applies automatically.
+        with:
+          args: >
+            detect
+            --source .
+            --log-opts="HEAD"
+            --no-git=false
+            --redact
+
+      - name: Check for high-risk placeholder secrets in committed files
+        # Lightweight heuristic scan that catches common developer mistakes:
+        # - Default JWT secrets left in committed config
+        # - Hardcoded API keys in source
+        # - Private keys accidentally committed
+        # - AWS key patterns
+        # This is complementary to gitleaks and runs without any external tool.
+        shell: bash
+        run: |
+          set +e
+          FOUND=0
+
+          # Patterns known to be developer-placeholder values that must never be committed.
+          HIGH_RISK_PATTERNS=(
+            'your-super-secret-jwt-key'
+            'change-me-in-production'
+            'CHANGE_ME'
+            'INSERT_SECRET_HERE'
+            'TODO.*secret'
+            'AKIA[0-9A-Z]{16}'
+            '-----BEGIN (RSA|EC|OPENSSH) PRIVATE KEY-----'
+            'sk-[a-zA-Z0-9]{48}'
+          )
+
+          # Files and directories to exclude from the scan.
+          EXCLUDE_ARGS=(
+            --exclude-dir=node_modules
+            --exclude-dir=.git
+            --exclude-dir=target
+            --exclude-dir=.next
+            --exclude='*.lock'
+            --exclude='*.wasm'
+            --exclude='*.png'
+            --exclude='*.svg'
+          )
+
+          for pattern in "${HIGH_RISK_PATTERNS[@]}"; do
+            # Search only tracked files (respects .gitignore automatically via git ls-files).
+            # Exclude .github/ (workflow definitions) and docs/ (documentation examples) and .env.example.
+            if git ls-files -z | grep -zv '^\.github/' | grep -zv '^docs/' | xargs -0 grep -l --include="*.ts" --include="*.js" \
+                --include="*.json" --include="*.yaml" --include="*.yml" \
+                -P "$pattern" 2>/dev/null | grep -v '\.env\.example$' | grep -q .; then
+              echo "::error::High-risk placeholder detected in committed file (pattern: $pattern)"
+              git ls-files -z | grep -zv '^\.github/' | grep -zv '^docs/' | xargs -0 grep -ln -P "$pattern" 2>/dev/null | \
+                grep -v '\.env\.example$'
+              FOUND=1
+            fi
+          done
+
+          if [ "$FOUND" -eq 1 ]; then
+            echo ""
+            echo "::error::One or more high-risk secrets or placeholders were found in committed files."
+            echo "Remove them, rotate any real credentials, and re-push."
+            echo "See docs/SECRETS-INVENTORY.md for the canonical secrets reference."
+            exit 1
+          fi
+          echo "No high-risk placeholder secrets found in committed files."

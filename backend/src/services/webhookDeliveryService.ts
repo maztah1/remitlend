@@ -1,8 +1,6 @@
 import logger from '../utils/logger.js';
-import {
-  signWebhookPayload,
-  getActiveSecret,
-} from './webhookSigningService.js';
+import { getOutboundTraceparent } from '../utils/requestContext.js';
+import { signWebhookPayload, getActiveSecret } from './webhookSigningService.js';
 
 export interface WebhookDelivery {
   endpoint: string;
@@ -33,6 +31,10 @@ export async function sendWebhook(delivery: WebhookDelivery): Promise<void> {
         'Content-Type': 'application/json',
         'x-remitlend-signature': signature,
         'x-remitlend-timestamp': timestamp,
+        // Continue the caller's trace (indexer pass or API request) into the
+        // subscriber's logs (#414). Uses a child span so the delivery hop is
+        // distinguishable from the work that triggered it.
+        traceparent: getOutboundTraceparent(),
       },
       body: payloadStr,
       timeout: 10000, // 10 second timeout

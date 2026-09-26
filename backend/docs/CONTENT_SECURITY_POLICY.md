@@ -144,6 +144,13 @@ tail -f logs/app.log | grep "CSP violation"
 grep "CSP violation" logs/app.log | jq '.violatedDirective' | sort | uniq -c
 ```
 
+The frontend also listens for `securitypolicyviolation` events. It truncates
+browser-provided fields to bounded lengths and sends the report to the backend
+with `navigator.sendBeacon`, using a keepalive `fetch` fallback when Beacon is
+unavailable. This supplements the browser's native `report-uri` delivery and
+is intended for diagnostics only; it does not relax the policy or include
+session tokens.
+
 ## CSP Exceptions
 
 ### When to Add Exceptions

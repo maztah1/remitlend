@@ -39,3 +39,31 @@ jobs:
 
       - name: Run accessibility snapshots
         run: npx playwright test e2e/a11y.spec.ts --project=chromium
+
+  rtl-layout:
+    name: RTL and long-string layout validation
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Build
+        run: npm run build
+
+      - name: Run RTL and long-string layout validation
+        run: npx playwright test e2e/rtl-layout.spec.ts --project=chromium

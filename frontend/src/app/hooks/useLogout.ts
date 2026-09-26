@@ -6,6 +6,7 @@ import { useWalletStore } from "../stores/useWalletStore";
 import { useUserStore } from "../stores/useUserStore";
 import { useGamificationStore } from "../stores/useGamificationStore";
 import { useQueryClient } from "@tanstack/react-query";
+import { captureSessionIntent, sessionExpiredRedirect } from "../lib/sessionRecovery";
 
 /**
  * useLogout
@@ -29,6 +30,9 @@ export function useLogout() {
 
   const logout = useCallback(
     (options?: { sessionExpired?: boolean; redirectTo?: string }) => {
+      if (options?.sessionExpired) {
+        captureSessionIntent();
+      }
       // 1. Clear authentication state (JWT, user profile)
       clearUser();
 
@@ -44,8 +48,7 @@ export function useLogout() {
       // 5. Navigate away
       const dest = options?.redirectTo ?? "/";
       if (options?.sessionExpired) {
-        // Append flag so the landing page can show an expiry notice
-        router.replace(`${dest}?reason=session_expired`);
+        router.replace(dest === "/" ? sessionExpiredRedirect() : `${dest}?reason=session_expired`);
       } else {
         router.replace(dest);
       }

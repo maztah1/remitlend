@@ -112,7 +112,7 @@ async function trackSuspiciousActivity(req: Request, publicKey: string): Promise
   const existing = await cacheService.get<SuspiciousActivityData>(key);
   const now = Date.now();
   
-  const accountsTargeted = existing ? new Set(existing.accountsTargeted) : new Set();
+  const accountsTargeted = existing ? new Set<string>(existing.accountsTargeted) : new Set<string>();
   accountsTargeted.add(publicKey);
   
   const updated: SuspiciousActivityData = {
@@ -141,6 +141,10 @@ export async function authSecurityMiddleware(
   
   const ipFailedKey = `${FAILED_ATTEMPTS_PREFIX}ip:${clientId}`;
   const ipLockoutKey = `${LOCKOUT_PREFIX}ip:${clientId}`;
+  // Hoisted to the middleware scope so the `res.send` wrapper below can reach
+  // them; both are only meaningful when a public key is present.
+  const accountFailedKey = publicKey ? `${FAILED_ATTEMPTS_PREFIX}account:${publicKey}` : '';
+  const accountLockoutKey = publicKey ? `${LOCKOUT_PREFIX}account:${publicKey}` : '';
   
   const ipLockout = await isLockedOut(ipLockoutKey);
   if (ipLockout) {
@@ -153,9 +157,6 @@ export async function authSecurityMiddleware(
   }
   
   if (publicKey) {
-    const accountFailedKey = `${FAILED_ATTEMPTS_PREFIX}account:${publicKey}`;
-    const accountLockoutKey = `${LOCKOUT_PREFIX}account:${publicKey}`;
-    
     const accountLockout = await isLockedOut(accountLockoutKey);
     if (accountLockout) {
       const retryAfter = Math.ceil((accountLockout.lockedUntil - Date.now()) / 1000);
@@ -176,7 +177,11 @@ export async function authSecurityMiddleware(
   }
   
   const originalSend = res.send;
-  res.send = function (body?: any): Response {
+  // The wrapper awaits Redis-backed counters/lockout bookkeeping before
+  // delegating to the original `send`. Express does not consume the return
+  // value of `res.send` (and Express 5 tolerates a promise from a handler), so
+  // the wrapper is async and cast back to Express's declared signature.
+  res.send = (async function patchedSend(this: Response, body?: any): Promise<Response> {
     const statusCode = res.statusCode;
     
     if (statusCode === 401 || statusCode === 400) {
@@ -201,7 +206,6 @@ export async function authSecurityMiddleware(
           await lockOut(ipLockoutKey, `Too many failed attempts from this IP (${ipFailed.count})`);
         }
         
-        const accountFailedKey = `${FAILED_ATTEMPTS_PREFIX}account:${publicKey}`;
         const accountFailed = await incrementFailedAttempts(accountFailedKey, 60);
         
         if (accountFailed.count >= MAX_FAILED_ATTEMPTS_PER_ACCOUNT) {
@@ -237,7 +241,7 @@ export async function authSecurityMiddleware(
     }
     
     return originalSend.call(this, body);
-  };
+  }) as unknown as Response['send'];
   
   next();
 }

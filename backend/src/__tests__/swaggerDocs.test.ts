@@ -1,18 +1,25 @@
 import { jest } from '@jest/globals';
 import request from 'supertest';
 
-jest.unstable_mockModule('../db/connection.js', () => ({
-  default: {
+jest.unstable_mockModule('../db/connection.js', () => {
+  // `dbConnectionLeakDetector` and `piiCrypto` import the named `pool` export,
+  // so the mock must expose it alongside the default export.
+  const connection = {
     query: jest
       .fn<() => Promise<{ rows: unknown[]; rowCount: number }>>()
       .mockResolvedValue({ rows: [], rowCount: 0 }),
-  },
-  query: jest
-    .fn<() => Promise<{ rows: unknown[]; rowCount: number }>>()
-    .mockResolvedValue({ rows: [], rowCount: 0 }),
-  getClient: jest.fn(),
-  withTransaction: jest.fn(),
-}));
+    on: jest.fn(),
+    connect: jest.fn(),
+  };
+
+  return {
+    default: connection,
+    pool: connection,
+    query: connection.query,
+    getClient: jest.fn(),
+    withTransaction: jest.fn(),
+  };
+});
 
 jest.unstable_mockModule('../services/cacheService.js', () => ({
   cacheService: {

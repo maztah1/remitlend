@@ -7,6 +7,28 @@ export const metricsRegistry = new client.Registry();
 
 client.collectDefaultMetrics({ register: metricsRegistry });
 
+export const traceContextCounter = new client.Counter({
+  name: 'trace_context_requests_total',
+  help: 'Inbound requests by trace-context resolution outcome (incoming, generated, invalid).',
+  labelNames: ['source'] as const,
+  registers: [metricsRegistry],
+});
+
+export const chainConfirmationCounter = new client.Counter({
+  name: 'chain_confirmation_total',
+  help: 'Soroban transaction confirmation outcomes observed by the API (success, failed, not_found, error).',
+  labelNames: ['status'] as const,
+  registers: [metricsRegistry],
+});
+
+export const chainConfirmationDurationHistogram = new client.Histogram({
+  name: 'chain_confirmation_duration_seconds',
+  help: 'Wall-clock seconds from transaction submission to observed chain confirmation.',
+  labelNames: ['status'] as const,
+  buckets: [0.5, 1, 2, 5, 10, 20, 30, 60],
+  registers: [metricsRegistry],
+});
+
 export const indexerLastLedgerGauge = new client.Gauge({
   name: 'indexer_last_ledger',
   help: 'Last ledger successfully processed by the event indexer.',

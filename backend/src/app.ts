@@ -30,11 +30,20 @@ import { errorHandler } from './middleware/errorHandler.js';
 import { metricsHandler, metricsMiddleware } from './middleware/metrics.js';
 import { requestLogger } from './middleware/requestLogger.js';
 import { requestIdMiddleware } from './middleware/requestId.js';
+import { traceContextMiddleware } from './middleware/traceContext.js';
+import { cspHeadersMiddleware, cspNonceMiddleware } from './middleware/cspNonce.js';
+import { idempotencyMiddleware } from './middleware/idempotency.js';
+import { shutdownCoordinator } from './middleware/shutdownHandler.js';
+import { reportCSPViolation } from './controllers/cspReportController.js';
 import { pauseGuard } from './middleware/pauseGuard.js';
 import { deprecationHeadersMiddleware } from './middleware/deprecationHeaders.js';
 import { asyncHandler } from './utils/asyncHandler.js';
 import { AppError } from './errors/AppError.js';
-import { setupConnectionLeakDetection, shutdownConnectionLeakDetection, dbConnectionLeakDetector } from './middleware/dbConnectionLeakDetector.js';
+import {
+  setupConnectionLeakDetection,
+  shutdownConnectionLeakDetection,
+  dbConnectionLeakDetector,
+} from './middleware/dbConnectionLeakDetector.js';
 const app = express();
 
 setupConnectionLeakDetection();
@@ -127,7 +136,18 @@ const corsOptions: cors.CorsOptions = {
     return callback(AppError.forbidden('Origin is not allowed by CORS policy'));
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key', 'x-request-id', 'Idempotency-Key'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'x-api-key',
+    'x-request-id',
+    'Idempotency-Key',
+    // W3C Trace Context (#414): accepted from the wallet frontend and any
+    // upstream gateway so browser- and edge-originated traces can be joined.
+    'traceparent',
+    'tracestate',
+  ],
+  exposedHeaders: ['x-request-id', 'traceparent', 'tracestate'],
   credentials: true,
 };
 
@@ -137,6 +157,9 @@ app.use(compression());
 app.use(express.json({ limit: '100kb' }));
 app.use(globalRateLimiter);
 app.use(requestIdMiddleware);
+// Trace context (#414): resolves/creates the W3C `traceparent` for the request
+// after the request id so both correlation fields live in one async context.
+app.use(traceContextMiddleware);
 app.use(requestLogger);
 app.use(metricsMiddleware);
 app.use(dbConnectionLeakDetector);

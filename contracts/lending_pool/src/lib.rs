@@ -45,9 +45,9 @@ pub struct PauseFlags {
 }
 
 impl PauseFlags {
-    const DEPOSITS_BIT: u32 = 0x1;      // Bit 0
-    const WITHDRAWALS_BIT: u32 = 0x2;   // Bit 1
-    const YIELD_BIT: u32 = 0x4;         // Bit 2
+    const DEPOSITS_BIT: u32 = 0x1; // Bit 0
+    const WITHDRAWALS_BIT: u32 = 0x2; // Bit 1
+    const YIELD_BIT: u32 = 0x4; // Bit 2
 
     pub fn new(deposits: bool, withdrawals: bool, yield_distribution: bool) -> Self {
         let mut flags = 0u32;
@@ -339,7 +339,7 @@ impl LendingPool {
         env.storage()
             .instance()
             .get(&DataKey::PauseFlags)
-            .unwrap_or_else(|| PauseFlags::none())
+            .unwrap_or_else(PauseFlags::none)
     }
 
     /// Checks if deposits are paused. Returns `OperationPaused` if paused.
@@ -1247,3 +1247,9 @@ impl LendingPool {
 
 #[cfg(test)]
 mod test;
+
+// Security issue #356: commission invariant-based economic attack review.
+// Covers share-price inflation, donation attacks, late-join yield extraction,
+// granular pause gates, and slippage guard correctness.
+#[cfg(test)]
+mod commission_invariants;

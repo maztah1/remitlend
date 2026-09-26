@@ -604,57 +604,67 @@ Content-Type: application/json
 
 ### Pool Endpoints
 
-#### GET /api/v1/pool
+#### GET /api/v1/pool/stats
 
-Get all available lending pools.
+Aggregate lending-pool statistics (total deposits, outstanding balance,
+utilisation, APY, and the withdrawal cooldown).
 
-**Query Parameters:**
+**Headers:**
 ```
-?limit=10&offset=0
+Authorization: Bearer <JWT_TOKEN>
 ```
+
+**Scopes:** `read:pool`, lender role.
 
 **Response (200 OK):**
 ```json
 {
   "success": true,
   "data": {
-    "pools": [
-      {
-        "poolId": "pool_123",
-        "currency": "USDC",
-        "totalLiquidity": "100000",
-        "available": "50000",
-        "utilization": "0.5",
-        "interestRate": "0.05"
-      }
-    ]
+    "totalDeposits": 100000,
+    "totalOutstanding": 50000,
+    "utilizationRate": 0.5,
+    "apy": 0.08,
+    "activeLoansCount": 42,
+    "poolTokenAddress": "CBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+    "withdrawalCooldownLedgers": 0
   }
 }
 ```
+
+Amounts are derived from the database projection of contract events and are
+reconciled against the contracts; see
+[domain-state-machines.md](./domain-state-machines.md).
 
 ---
 
-#### GET /api/v1/pool/{poolId}
+#### GET /api/v1/pool/{token}/share-price
 
-Get details for a specific pool.
+Current share price of a pool token, read from the deployed contract and
+cached briefly.
+
+**Headers:**
+```
+Authorization: Bearer <JWT_TOKEN>
+```
+
+**Scopes:** `read:pool`, lender role.
 
 **Response (200 OK):**
 ```json
 {
   "success": true,
   "data": {
-    "poolId": "pool_123",
-    "currency": "USDC",
-    "totalLiquidity": "100000",
-    "available": "50000",
-    "utilized": "50000",
-    "utilization": "0.5",
-    "interestRate": "0.05",
-    "activeLoans": 42,
-    "totalBorrowers": 38
-  }
+    "sharePrice": 1050000,
+    "sharePriceRatio": 1.05
+  },
+  "cached": false
 }
 ```
+
+**Notes:**
+- `{token}` is the pool token contract identifier, not an internal pool id.
+- A cache hit returns `"cached": true` with the previously computed value.
 
 ---
 
@@ -712,14 +722,17 @@ Get the most recent credit score for a borrower.
 
 ### Indexer Endpoints
 
-#### GET /api/v1/indexer/events
+#### GET /api/v1/indexer/events/borrower/{borrower}
 
-Query blockchain events (loan requests, approvals, repayments, etc.).
+Blockchain loan events (requests, approvals, repayments, defaults) for one
+borrower. The authenticated wallet must be the borrower in the path.
 
-**Query Parameters:**
+**Headers:**
 ```
-?type=LoanRequested&borrower=G...&limit=10&offset=0
+Authorization: Bearer <JWT_TOKEN>
 ```
+
+**Scopes:** `read:loans`.
 
 **Response (200 OK):**
 ```json
@@ -735,19 +748,26 @@ Query blockchain events (loan requests, approvals, repayments, etc.).
         "timestamp": "2024-01-01T12:00:00Z",
         "transactionHash": "tx123..."
       }
-    ],
-    "total": 100,
-    "limit": 10,
-    "offset": 0
+    ]
+  },
+  "page": {
+    "next_cursor": null,
+    "limit": 20
   }
 }
 ```
 
+**Notes:**
+- `403` is returned when `{borrower}` is not the authenticated wallet.
+- The list is a projection of indexed contract events and can lag the chain by
+  up to one indexer poll interval.
+
 ---
 
-#### GET /api/v1/indexer/loans/{loanId}/events
+#### GET /api/v1/indexer/events/loan/{loanId}
 
-Get all events for a specific loan.
+All indexed events for a specific loan. The authenticated wallet must be the
+borrower of that loan.
 
 **Response (200 OK):**
 ```json
@@ -775,22 +795,30 @@ Get all events for a specific loan.
 }
 ```
 
+**Notes:**
+- Event types are mirrored from the contract events; see
+  [domain-state-machines.md](./domain-state-machines.md#loan-lifecycle) for the
+  authoritative lifecycle.
+
 ---
 
 ### Admin Endpoints
 
-#### GET /api/v1/admin/loans
+#### GET /api/v1/admin/loan-disputes
 
-List all loans (admin only).
+List loan disputes (admin only), newest first, using keyset pagination pinned to
+a snapshot sequence so concurrent writes cannot cause duplicates or skips.
 
 **Headers:**
 ```
 x-api-key: <ADMIN_API_KEY>
 ```
 
+**Scope:** `admin:disputes`.
+
 **Query Parameters:**
 ```
-?status=pending&limit=20&offset=0
+?status=open&limit=20&cursor=<next_cursor>
 ```
 
 **Response (200 OK):**
@@ -798,19 +826,30 @@ x-api-key: <ADMIN_API_KEY>
 {
   "success": true,
   "data": {
-    "loans": [
+    "items": [
       {
         "loanId": 123,
         "borrower": "GBRPYHIL2CI3WHZDTOOQFC6EB4CGQONFUY4NOB4HST7R6C9DBWQLDA7",
-        "amount": "1000",
-        "status": "pending_approval",
+        "status": "open",
+        "reason": "amount_received_short",
         "createdAt": "2024-01-01T12:00:00Z"
       }
-    ],
-    "total": 150
+    ]
+  },
+  "page": {
+    "next_cursor": null,
+    "snapshot_seq": "42",
+    "total_at_snapshot": 3,
+    "limit": 20
   }
 }
 ```
+
+**Notes:**
+- List loans for a borrower with `GET /api/v1/loans/borrower/{borrower}`;
+  loan lifecycle states are documented in
+  [domain-state-machines.md](./domain-state-machines.md).
+- Pagination follows [pagination-contract.md](./pagination-contract.md).
 
 ---
 
@@ -1126,7 +1165,10 @@ The raw OpenAPI 3.0 specification is available at `/docs.json`.
 - Monitor rate limit headers (`X-RateLimit-*`)
 - Track response times and error rates
 - Set up alerts for 5xx errors
-- Use correlation IDs for request tracing
+- Use correlation IDs (`x-request-id`) and W3C Trace Context (`traceparent`)
+  for request tracing. Send a `traceparent` header to continue your own trace;
+  the API echoes its child span back in the response `traceparent` header. See
+  [domain-state-machines.md](./domain-state-machines.md#observability-trace-context).
 
 ---
 
@@ -1143,3 +1185,34 @@ For issues, questions, or feature requests:
 **Last Updated:** 2024-01-15  
 **API Version:** 1.0.0  
 **Status:** Production
+
+---
+
+## Executable Verification (clean checkout)
+
+This reference is machine-checked, so a clean checkout cannot drift from the
+implementation without failing CI. Every endpoint documented here is asserted
+against the OpenAPI spec that `/docs.json` serves at runtime — parsed directly
+from the route handlers via `swagger-jsdoc`.
+
+```bash
+# from the repository root, on a clean checkout
+cd backend
+npm ci
+npm run docs:check      # or: npm test -- apiReference
+```
+
+What the check verifies:
+
+| Assertion | Why it matters |
+| --- | --- |
+| Every `#### METHOD /path` heading in this file resolves to a live Express route with that exact method (mount prefixes and `{param}` syntax normalised). | A documented endpoint that no longer exists misleads integrators. |
+| Every documented section carries a `**Request**` or `**Response**` block. | Catches headings added without content. |
+| The live route table is enumerated from the running application and is at least as large as the documented set. | Catches a parsing regression that would make the check vacuously pass. |
+| `/api/`-prefixed paths match a real mount prefix. | Catches a base-path rename that would 404 for every consumer. |
+
+Contributor workflow when adding an endpoint: implement the route (with its
+`@openapi` JSDoc block if it should appear in Swagger), add the
+`#### METHOD /path` section here with a request and a response example, then run
+`npm run docs:check` (or `npm test -- apiReference`) from `backend/`.
+

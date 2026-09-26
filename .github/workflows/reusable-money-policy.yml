@@ -1,0 +1,27 @@
+# Issue #409 – Reusable workflow: money-policy drift check
+# Least-privilege: read-only checkout, no secrets needed.
+name: Money Policy Check (reusable)
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  money-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+          cache-dependency-path: scripts/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+        working-directory: scripts
+      - name: Check generated money-policy artifacts are up to date
+        run: npx ts-node gen-money.ts --check
+        working-directory: scripts

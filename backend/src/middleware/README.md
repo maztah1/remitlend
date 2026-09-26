@@ -12,12 +12,15 @@ Applied in this order for every request:
 4. `express.json` (third-party) — JSON body parsing, capped at 100kb.
 5. **`globalRateLimiter`** (`rateLimiter.ts`) — global per-IP request rate limit.
 6. **`requestIdMiddleware`** (`requestId.ts`) — assigns/propagates `x-request-id`.
-7. **`requestLogger`** (`requestLogger.ts`) — structured request/response logging.
-8. **`metricsMiddleware`** (`metrics.ts`) — records Prometheus HTTP metrics.
-9. **`pauseGuard`** (`pauseGuard.ts`) — rejects state-mutating requests while contracts are paused.
-10. _(routes mounted here)_
-11. **`Sentry.setupExpressErrorHandler`** — captures forwarded errors for Sentry.
-12. **`errorHandler`** (`errorHandler.ts`) — final centralized error handler, must stay last.
+7. **`traceContextMiddleware`** (`traceContext.ts`) — resolves/creates the W3C
+   `traceparent` for the request, stores it in the async request context, and
+   echoes it back on the response (see `docs/domain-state-machines.md`).
+8. **`requestLogger`** (`requestLogger.ts`) — structured request/response logging.
+9. **`metricsMiddleware`** (`metrics.ts`) — records Prometheus HTTP metrics.
+10. **`pauseGuard`** (`pauseGuard.ts`) — rejects state-mutating requests while contracts are paused.
+11. _(routes mounted here)_
+12. **`Sentry.setupExpressErrorHandler`** — captures forwarded errors for Sentry.
+13. **`errorHandler`** (`errorHandler.ts`) — final centralized error handler, must stay last.
 
 Additional middleware below are applied per-route (not globally in `app.ts`) via individual router files.
 
@@ -36,6 +39,7 @@ Additional middleware below are applied per-route (not globally in `app.ts`) via
 | `rateLimiter.ts`         | `globalRateLimiter`/`strictRateLimiter` — general-purpose per-IP rate limiting used in `app.ts`.                      |
 | `rateLimitMiddleware.ts` | Configurable rate limiting middleware for specific routes, with pluggable request-identifier extraction.              |
 | `requestId.ts`           | Assigns/propagates a unique `x-request-id` per request for tracing.                                                   |
+| `traceContext.ts`        | Resolves/creates the W3C `traceparent` (+ bounded `tracestate` pass-through) per request; exposes `req.traceId`/`req.spanId` and counts incoming/generated/invalid outcomes in `trace_context_requests_total`. |
 | `requestLogger.ts`       | Logs structured HTTP request fields (method, url, statusCode, durationMs).                                            |
 | `validation.ts`          | `validateBody`/`validateQuery`/`validateParams` — validates request data against Zod schemas.                         |
 

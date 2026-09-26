@@ -9,6 +9,8 @@
  * description of the fetch they wanted to make, and we replay it with `fetch`.
  */
 
+import { TRACEPARENT_HEADER, outboundTraceparent } from "./traceContext";
+
 export interface QueuedRequest {
   id: string;
   url: string;
@@ -113,9 +115,13 @@ export async function flushQueue(): Promise<FlushResult> {
   try {
     for (const item of read()) {
       try {
+        // Replays happen long after the original attempt, so the queued trace
+        // context would be stale and misleading; mint a fresh child span at
+        // replay time instead (the API still ties it to the offline flow via
+        // the request id). See #414.
         const res = await fetch(item.url, {
           method: item.method,
-          headers: item.headers,
+          headers: { ...item.headers, [TRACEPARENT_HEADER]: outboundTraceparent() },
           body: item.body,
         });
 

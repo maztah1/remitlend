@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { query } from '../db/connection.js';
 import logger from '../utils/logger.js';
+import { getOutboundTraceparent } from '../utils/requestContext.js';
 
 // #1520 — this array is the single source of truth for which event types
 // external webhook subscribers can register for. docs/webhooks.md's
@@ -255,6 +256,8 @@ async function postWebhook(
       method: 'POST',
       headers: {
         'content-type': 'application/json',
+        // Continue the retry's trace context into the subscriber's logs (#414).
+        traceparent: getOutboundTraceparent(),
         // X-RemitLend-Signature uses the GitHub/Stripe-style "sha256=<hex>"
         // format so subscribers can verify payload integrity (see
         // docs/wiki/webhook-signatures.md for the verification recipe).

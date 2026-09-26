@@ -1,8 +1,15 @@
 name: Visual Regression
 
 # Issue #111 — block PRs on unreviewed visual diffs.
+# Issue #343 — extend coverage to critical financial states (success,
+# authorization failure, boundary values, retries, stale data, dependency
+# failure) and surface diagnostics for triage.
 # Mark this job as a required status check in branch protection so a PR
 # cannot merge while the screenshots differ from the committed baselines.
+#
+# Issue #334 — also exercise right-to-left (RTL) and long-string layout
+# validation. The visual suite runs once per locale/direction matrix entry so
+# RTL rendering and overflow/truncation regressions are caught before merge.
 
 on:
   pull_request:
@@ -17,6 +24,20 @@ jobs:
     defaults:
       run:
         working-directory: frontend
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ltr
+            locale: en-US
+            direction: ltr
+          - name: rtl
+            locale: ar-EG
+            direction: rtl
+    name: visual (${{ matrix.name }})
+    env:
+      VISUAL_LOCALE: ${{ matrix.locale }}
+      VISUAL_DIRECTION: ${{ matrix.direction }}
     steps:
       - uses: actions/checkout@v7
 
@@ -43,6 +64,32 @@ jobs:
         if: ${{ failure() }}
         uses: actions/upload-artifact@v7
         with:
-          name: playwright-visual-report
+          name: playwright-visual-report-${{ matrix.name }}
           path: frontend/playwright-report/
           retention-days: 7
+
+      - name: Upload visual diff artifacts
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-visual-diffs
+          path: |
+            frontend/test-results/
+            frontend/**/*-diff.png
+            frontend/**/*-actual.png
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Summarize visual regression failures
+        if: ${{ failure() }}
+        run: |
+          {
+            echo "## Visual regression failures"
+            echo ""
+            echo "Critical financial states are covered by the visual suite. Review the"
+            echo "uploaded \`playwright-visual-report\` and \`playwright-visual-diffs\` artifacts"
+            echo "before approving any baseline update."
+            echo ""
+            echo "Covered states: success, authorization failure, boundary values,"
+            echo "retries, stale data, dependency failure."
+          } >> "$GITHUB_STEP_SUMMARY"
